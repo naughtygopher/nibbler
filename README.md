@@ -1,3 +1,5 @@
+<p align="center"><img src="https://github.com/user-attachments/assets/1b34c21a-8031-43d3-a172-44e039b58190" alt="nibbler gopher" width="256px"/></p>
+
 [![](https://github.com/naughtygopher/nibbler/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/naughtygopher/nibbler/actions)
 [![Go Reference](https://pkg.go.dev/badge/github.com/naughtygopher/nibbler.svg)](https://pkg.go.dev/github.com/naughtygopher/nibbler)
 [![Go Report Card](https://goreportcard.com/badge/github.com/naughtygopher/nibbler)](https://goreportcard.com/report/github.com/naughtygopher/nibbler)
@@ -6,7 +8,7 @@
 
 # Nibbler
 
-Nibbler is a minimal package which helps you implement micro-batch processing.
+Nibbler is a resilient, minimal, package which helps you implement micro-batch processing.
 
 ## What is Micro-batch Processing?
 
@@ -18,6 +20,33 @@ The processing of a single micro batch can be triggered in two ways, based on a 
 
 ## How to use nibbler?
 
-```golang
+### Config
 
+```golang
+type BatchProcessor[T any] func(ctx context.Context, trigger trigger, batch []T) error
+
+type Config[T any] struct {
+	// ProcessingTimeout is context timeout for processing a single batch
+	ProcessingTimeout time.Duration
+    // TickerDuration is the ticker duration, for when a non empty batch would be processed
+	TickerDuration    time.Duration
+	// Size is the micro batch size
+	Size uint
+
+    // Processor is the function which processes a single batch
+	Processor BatchProcessor[T]
+
+	// ResumeAfterErr if true will continue listening and keep processing if the processor returns
+	// an error, or if processor panics. In both cases, ProcessorErr would be executed
+	ResumeAfterErr bool
+    // ProcessorErr is executed if the processor returns erorr or panics
+	ProcessorErr   func(failedBatch []T, err error)
+}
 ```
+
+You can find usage details in the tests.
+
+## The gopher
+
+The gopher used here was created using [Gopherize.me](https://gopherize.me/). Nibbler is out there eating your events/streams
+one bite at a time.
