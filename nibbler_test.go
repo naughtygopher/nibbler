@@ -178,7 +178,7 @@ func TestProcessorErr(tt *testing.T) {
 		receiver <- "again"
 	})
 
-	tt.Run("panic recovery with resume", func(t *testing.T) {
+	tt.Run("panic recovery with resume and non error panic", func(t *testing.T) {
 		receivedErr := make(chan bool, 2)
 		asserter := assert.New(t)
 
@@ -193,10 +193,10 @@ func TestProcessorErr(tt *testing.T) {
 		nib, err := Start(&Config[string]{
 			TickerDuration: time.Second,
 			Processor: func(_ context.Context, _ trigger, _ []string) error {
-				panic(errProcessing)
+				panic("processor panic")
 			},
 			ProcessorErr: func(failedBatch []string, err error) {
-				asserter.ErrorIs(err, errProcessing, "panic recovery with resume")
+				asserter.ErrorContains(err, "processor panic")
 				asserter.ElementsMatch([]string{assertElement}, failedBatch, "panic recovery with resume")
 				receivedErr <- true
 			},
