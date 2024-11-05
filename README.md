@@ -44,6 +44,8 @@ type Config[T any] struct {
 
 ## How to use nibbler?
 
+Below is an example showing how batching is used for a "banking" app which bulk processes account statements.
+
 ```golang
 package main
 
