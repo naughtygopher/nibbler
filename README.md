@@ -2,8 +2,8 @@
 
 [![](https://github.com/naughtygopher/nibbler/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/naughtygopher/nibbler/actions)
 [![Go Reference](https://pkg.go.dev/badge/github.com/naughtygopher/nibbler.svg)](https://pkg.go.dev/github.com/naughtygopher/nibbler)
-[![Go Report Card](https://goreportcard.com/badge/github.com/naughtygopher/nibbler)](https://goreportcard.com/report/github.com/naughtygopher/nibbler)
-[![Coverage Status](https://coveralls.io/repos/github/naughtygopher/nibbler/badge.svg?branch=main)](https://coveralls.io/github/naughtygopher/nibbler?branch=main)
+[![Go Report Card](https://goreportcard.com/badge/github.com/naughtygopher/nibbler?cache_invalidate=1)](https://goreportcard.com/report/github.com/naughtygopher/nibbler)
+[![Coverage Status](https://coveralls.io/repos/github/naughtygopher/nibbler/badge.svg?branch=main&cache_invalidate=1)](https://coveralls.io/github/naughtygopher/nibbler?branch=main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/creativecreature/sturdyc/blob/master/LICENSE)
 
 # Nibbler
