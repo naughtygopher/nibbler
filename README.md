@@ -18,8 +18,6 @@ The same concept can also be extended to handle events processing. So, we have a
 
 The processing of a single micro batch can be triggered in two ways, based on a time ticker or if the micro batch size is full. i.e. process a non empty batch if duration X has passed or if the batch size is full
 
-## How to use nibbler?
-
 ### Config
 
 ```golang
@@ -44,7 +42,109 @@ type Config[T any] struct {
 }
 ```
 
-You can find usage details in the tests.
+## How to use nibbler?
+
+```golang
+package main
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/naughtygopher/nibbler"
+)
+
+type db struct {
+	data         sync.Map
+	totalBalance int
+}
+
+func (d *db) BulkAddAccountsAndBalance(pp []AccStatement) error {
+	// assume we are doing a bulk insert/update into the database instead of inserting one by one.
+	// Bulk operations reduce the number of I/O required between your application and the database.
+	// Thereby making it better in most cases.
+	for _, p := range pp {
+		d.data.Store(p.AccountID, p.Balance)
+		d.totalBalance += p.Balance
+	}
+	return nil
+}
+
+type Bank struct {
+	db *db
+}
+
+func (bnk *Bank) ProcessAccountsBatch(
+	ctx context.Context,
+	trigger nibbler.Trigger,
+	batch []AccStatement,
+) error {
+	err := bnk.db.BulkAddAccountsAndBalance(batch)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (bnk *Bank) TotalBalance() int {
+	return bnk.db.totalBalance
+}
+
+func (bnk *Bank) TotalAccounts() int {
+	counter := 0
+	bnk.db.data.Range(func(key, value any) bool {
+		counter++
+		return true
+	})
+	return counter
+}
+
+type AccStatement struct {
+	AccountID string
+	Balance   int
+}
+
+func main() {
+	bnk := Bank{
+		db: &db{
+			data: sync.Map{},
+		},
+	}
+
+	nib, err := nibbler.Start(&nibbler.Config[AccStatement]{
+		Size:           10,
+		TickerDuration: time.Second,
+		Processor:      bnk.ProcessAccountsBatch,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	receiver := nib.Receiver()
+	for i := range 100 {
+		accID := fmt.Sprintf("account_id_%d", i)
+		receiver <- AccStatement{
+			AccountID: accID,
+			Balance:   50000 / (i + 1),
+		}
+	}
+
+	// wait for batches to be processed. Ideally this wouldn't be required as our application
+	// would not exit, instead just keep listening to the events stream.
+	time.Sleep(time.Second)
+
+	fmt.Printf(
+		"Number of accounts %d, total balance: %d\n",
+		bnk.TotalAccounts(),
+		bnk.TotalBalance(),
+	)
+}
+```
+
+You can find all usage details in the tests.
 
 ## The gopher
 

@@ -28,7 +28,7 @@ func TestNibbler(tt *testing.T) {
 		Size:              batchSize,
 		ProcessingTimeout: time.Millisecond,
 		TickerDuration:    batchFreq,
-		Processor: func(_ context.Context, _ trigger, batch []string) error {
+		Processor: func(_ context.Context, _ Trigger, batch []string) error {
 			gotchan <- slices.Clone(batch)
 
 			// last val is used to identify the end of all batches so that
@@ -99,7 +99,7 @@ func TestProcessorErr(tt *testing.T) {
 
 		nib, err := Start(&Config[string]{
 			TickerDuration: time.Second,
-			Processor: func(_ context.Context, _ trigger, _ []string) error {
+			Processor: func(_ context.Context, _ Trigger, _ []string) error {
 				return errProcessing
 			},
 			ProcessorErr: func(failedBatch []string, err error) {
@@ -128,7 +128,7 @@ func TestProcessorErr(tt *testing.T) {
 		assertElement := "hello"
 		nib, err := Start(&Config[string]{
 			TickerDuration: time.Second,
-			Processor: func(_ context.Context, _ trigger, _ []string) error {
+			Processor: func(_ context.Context, _ Trigger, _ []string) error {
 				return errProcessing
 			},
 			ProcessorErr: func(failedBatch []string, err error) {
@@ -160,7 +160,7 @@ func TestProcessorErr(tt *testing.T) {
 
 		nib, err := Start(&Config[string]{
 			TickerDuration: time.Second,
-			Processor: func(_ context.Context, _ trigger, _ []string) error {
+			Processor: func(_ context.Context, _ Trigger, _ []string) error {
 				panic(errProcessing)
 			},
 			ProcessorErr: func(failedBatch []string, err error) {
@@ -192,7 +192,7 @@ func TestProcessorErr(tt *testing.T) {
 		assertElement := "hello"
 		nib, err := Start(&Config[string]{
 			TickerDuration: time.Second,
-			Processor: func(_ context.Context, _ trigger, _ []string) error {
+			Processor: func(_ context.Context, _ Trigger, _ []string) error {
 				panic("processor panic")
 			},
 			ProcessorErr: func(failedBatch []string, err error) {
@@ -214,7 +214,7 @@ func TestProcessorErr(tt *testing.T) {
 
 func TestSanitizeValidate(tt *testing.T) {
 	var (
-		processor = func(ctx context.Context, trigger trigger, batch []string) error { return nil }
+		processor = func(ctx context.Context, trigger Trigger, batch []string) error { return nil }
 	)
 
 	tt.Run("all valid", func(t *testing.T) {

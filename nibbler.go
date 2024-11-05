@@ -15,14 +15,14 @@ import (
 
 var ErrValidation = errors.New("validation failed")
 
-type trigger string
+type Trigger string
 
 const (
-	TriggerTicker trigger = "TICKER"
-	TriggerFull   trigger = "BATCH_FULL"
+	TriggerTicker Trigger = "TICKER"
+	TriggerFull   Trigger = "BATCH_FULL"
 )
 
-type BatchProcessor[T any] func(ctx context.Context, trigger trigger, batch []T) error
+type BatchProcessor[T any] func(ctx context.Context, trigger Trigger, batch []T) error
 
 type Config[T any] struct {
 	// ProcessingTimeout is context timeout for processing a single batch
@@ -88,7 +88,7 @@ func (bat *Nibbler[T]) panicRecovery(rec any, err error) error {
 	return err
 }
 
-func (bat *Nibbler[T]) processBatch(trigger trigger) (err error) {
+func (bat *Nibbler[T]) processBatch(trigger Trigger) (err error) {
 	defer func() {
 		err = bat.panicRecovery(recover(), err)
 	}()
