@@ -19,7 +19,7 @@ The same concept can also be extended to handle events processing. So, we have a
 The processing of a single micro batch can be triggered in two ways, based on a time ticker or if the micro batch size is full. i.e. process a non empty batch if duration X has passed or if the batch size is full
 
 <p align="center">
-<img src="https://github.com/user-attachments/assets/0a7df1c0-2d23-475e-9cc3-205f3f9bf4c4" alt="nibbler" width="256px"/>
+<img src="https://github.com/user-attachments/assets/0a7df1c0-2d23-475e-9cc3-205f3f9bf4c4" alt="nibbler" width="384px"/>
 </p>
 
 ## Why use nibbler?
