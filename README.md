@@ -32,21 +32,21 @@ In any high throughput event/stream processing, it is imperative to process them
 type BatchProcessor[T any] func(ctx context.Context, trigger trigger, batch []T) error
 
 type Config[T any] struct {
-	// ProcessingTimeout is context timeout for processing a single batch
-	ProcessingTimeout time.Duration
+    // ProcessingTimeout is context timeout for processing a single batch
+    ProcessingTimeout time.Duration
     // TickerDuration is the ticker duration, for when a non empty batch would be processed
-	TickerDuration    time.Duration
-	// Size is the micro batch size
-	Size uint
+    TickerDuration    time.Duration
+    // Size is the micro batch size
+    Size uint
 
     // Processor is the function which processes a single batch
-	Processor BatchProcessor[T]
+    Processor BatchProcessor[T]
 
-	// ResumeAfterErr if true will continue listening and keep processing if the processor returns
-	// an error, or if processor panics. In both cases, ProcessorErr would be executed
-	ResumeAfterErr bool
+    // ResumeAfterErr if true will continue listening and keep processing if the processor returns
+    // an error, or if processor panics. In both cases, ProcessorErr would be executed
+    ResumeAfterErr bool
     // ProcessorErr is executed if the processor returns erorr or panics
-	ProcessorErr   func(failedBatch []T, err error)
+    ProcessorErr   func(failedBatch []T, err error)
 }
 ```
 
