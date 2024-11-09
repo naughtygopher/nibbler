@@ -18,6 +18,8 @@ The same concept can also be extended to handle events processing. So, we have a
 
 The processing of a single micro batch can be triggered in two ways, based on a time ticker or if the micro batch size is full. i.e. process a non empty batch if duration X has passed or if the batch size is full
 
+![nibbler](https://github.com/user-attachments/assets/31e5ac0d-c971-498a-9d8f-5f8c7a21f755)
+
 ## Why use nibbler?
 
 In any high throughput event/stream processing, it is imperative to process them in batches instead of individually. Processing events in batches when done properly optimizes usage of the downstream dependencies like databases, external systems (if they support) etc by significantly reducing [IOPS](https://en.wikipedia.org/wiki/IOPS). When deciding on how to process batches, it is important to still be able to process them realtime or near realtime. So, if we wait for a batch to be "full", and for any reason if the batch is not full fast enough, then processing would be indefinitely delayed. Hence the batches have to be flushed periodically, based on an acceptable tradeoff. The tradeoff in this case is, when the batch is not filled very fast, then we lose near realtime processing, rather would only be processed every N seconds/minute/duration.
