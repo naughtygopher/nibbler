@@ -21,6 +21,7 @@ The processing of a single micro batch can be triggered in two ways, based on a 
 <p align="center">
 <img src="https://github.com/user-attachments/assets/9d39a999-c9f7-46ea-99bc-0123d3cd0034" alt="nibbler" width="256px"/>
 </p>
+
 ## Why use nibbler?
 
 In any high throughput event/stream processing, it is imperative to process them in batches instead of individually. Processing events in batches when done properly optimizes usage of the downstream dependencies like databases, external systems (if they support) etc by significantly reducing [IOPS](https://en.wikipedia.org/wiki/IOPS). When deciding on how to process batches, it is important to still be able to process them realtime or near realtime. So, if we wait for a batch to be "full", and for any reason if the batch is not full fast enough, then processing would be indefinitely delayed. Hence the batches have to be flushed periodically, based on an acceptable tradeoff. The tradeoff in this case is, when the batch is not filled very fast, then we lose near realtime processing, rather would only be processed every N seconds/minute/duration.
