@@ -8,7 +8,7 @@
 
 # Nibbler
 
-Nibbler is a resilient, minimal, package which helps you implement micro-batch processing, within an application.
+Nibbler is a resilient, minimal, package which helps you implement micro-batch processing, within an application. Nibbler remains minimal with its 0 external dependencies and remains resilient within the context of the application by gracefully handling errors and panics.
 
 IMPORTANT: This is not a general purpose distributed task queue.
 
