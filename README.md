@@ -27,7 +27,7 @@ The processing of a single micro batch can be triggered in two ways, based on a 
 
 ## Why use nibbler?
 
-In any high throughput event/stream processing, it is imperative to process them in batches instead of individually. Processing events in batches when done properly optimize usage of the downstream dependencies like databases, external systems (if they support) etc by significantly reducing [IOPS](https://en.wikipedia.org/wiki/IOPS). When deciding on how to process batches, it is important to still be able to process them realtime or near realtime. So, if we wait for a batch to be "full", and for any reason if the batch is not full fast enough, then processing would be indefinitely delayed. Hence the batches have to be flushed periodically, based on an acceptable tradeoff. The tradeoff in this case is, when the batch is not filled very fast, then we lose near realtime processing, rather would only be processed every N seconds/minute/duration.
+In any high throughput event/stream processing, it is imperative to process events in batches instead of individually. Processing events in batches when done properly optimizes the usage of the downstream dependencies like databases, external systems (if they support) etc by significantly reducing [IOPS](https://en.wikipedia.org/wiki/IOPS). When deciding on how to process batches, it is important to still be able to process them realtime or near realtime. So, if we wait for a batch to be "full", and for any reason if the batch is not full fast enough, then processing would be indefinitely delayed. Hence the batches have to be flushed periodically, based on an acceptable tradeoff. The tradeoff in this case is, when the batch is not filled very fast, then we lose near realtime processing, rather would only be processed every N seconds/minute/duration.
 
 ### Config
 
@@ -35,21 +35,24 @@ In any high throughput event/stream processing, it is imperative to process them
 type BatchProcessor[T any] func(ctx context.Context, trigger trigger, batch []T) error
 
 type Config[T any] struct {
-    // ProcessingTimeout is context timeout for processing a single batch
-    ProcessingTimeout time.Duration
-    // TickerDuration is the ticker duration, for when a non empty batch would be processed
-    TickerDuration    time.Duration
-    // Size is the micro batch size
-    Size uint
+	// ProcessingTimeout is context timeout for processing a single batch. If less than 1ms, defaults to 1s
+	ProcessingTimeout time.Duration
+	// TickerDuration is the duration after which a non-empty batch would be flushed. If less than 1ms, defaults to 1s
+	TickerDuration time.Duration
 
-    // Processor is the function which processes a single batch
-    Processor BatchProcessor[T]
+	// Size is the micro batch size. If 0, defaults to 100
+	Size uint
 
-    // ResumeAfterErr if true will continue listening and keep processing if the processor returns
-    // an error, or if processor panics. In both cases, ProcessorErr would be executed
-    ResumeAfterErr bool
-    // ProcessorErr is executed if the processor returns erorr or panics
-    ProcessorErr   func(failedBatch []T, err error)
+	// Processor is a required configuration, it is called when a batch process is initiated either by
+	// ticker or when the batch is full. The 'batch' slice received must not be changed, if you have to
+	// process the batch asynchronously, copy the batch to a new slice prior to sending it to a Go routine.
+	Processor BatchProcessor[T]
+
+	// ResumeAfterErr if true will continue listening and keep processing if the processor returns
+	// an error, or if processor panics. In both cases, ProcessorErr would be executed
+	ResumeAfterErr bool
+	// ProcessorErr is the function which is executed if processor encounters an error or panic
+	ProcessorErr func(failedBatch []T, err error)
 }
 ```
 

@@ -25,17 +25,24 @@ const (
 type BatchProcessor[T any] func(ctx context.Context, trigger Trigger, batch []T) error
 
 type Config[T any] struct {
-	// ProcessingTimeout is context timeout for processing a single batch
+	// ProcessingTimeout is context timeout for processing a single batch. If less than 1ms, defaults to 1s
 	ProcessingTimeout time.Duration
-	TickerDuration    time.Duration
-	// Size is the micro batch size
+	// TickerDuration is the duration after which a non-empty batch would be flushed. If less than 1ms, defaults to 1s
+	TickerDuration time.Duration
+
+	// Size is the micro batch size. If 0, defaults to 100
 	Size uint
 
+	// Processor is a required configuration, it is called when a batch process is initiated either by
+	// ticker or when the batch is full. The 'batch' slice received must not be changed, if you have to
+	// process the batch asynchronously, copy the batch to a new slice prior to sending it to a Go routine.
 	Processor BatchProcessor[T]
+
 	// ResumeAfterErr if true will continue listening and keep processing if the processor returns
 	// an error, or if processor panics. In both cases, ProcessorErr would be executed
 	ResumeAfterErr bool
-	ProcessorErr   func(failedBatch []T, err error)
+	// ProcessorErr is the function which is executed if processor encounters an error or panic
+	ProcessorErr func(failedBatch []T, err error)
 }
 
 func (cfg *Config[T]) Sanitize() {
@@ -117,9 +124,8 @@ func (bat *Nibbler[T]) Receiver() chan<- T {
 // Listen listens to the receiver channel for processing the micro batches
 func (bat *Nibbler[T]) Listen() {
 	var (
-		ticker          = time.NewTicker(bat.cfg.TickerDuration)
-		size            = int(bat.cfg.Size)
-		queue  <-chan T = bat.queue
+		ticker = time.NewTicker(bat.cfg.TickerDuration)
+		size   = int(bat.cfg.Size)
 	)
 
 	defer func() {
@@ -129,29 +135,8 @@ func (bat *Nibbler[T]) Listen() {
 	}()
 
 	for {
-		err := error(nil)
-
-		select {
-		case <-ticker.C:
-			// process non empty batch
-			if len(bat.batch) > 0 {
-				err = bat.processBatch(TriggerTicker)
-			}
-
-		case value := <-queue:
-			bat.batch = append(bat.batch, value)
-			// process batch immediately if full, instead of waiting for ticker
-			if len(bat.batch) >= size {
-				err = bat.processBatch(TriggerFull)
-			}
-		}
-
-		if err == nil {
+		if err := bat.listener(ticker, size); err == nil {
 			continue
-		}
-
-		if bat.cfg.ProcessorErr != nil {
-			bat.cfg.ProcessorErr(bat.batch, err)
 		}
 
 		if !bat.cfg.ResumeAfterErr {
@@ -162,6 +147,29 @@ func (bat *Nibbler[T]) Listen() {
 		// There's no advantage of keeping the failed batch if resume is enabled
 		bat.batch = bat.batch[:0]
 	}
+}
+
+func (bat *Nibbler[T]) listener(ticker *time.Ticker, size int) (err error) {
+	select {
+	case <-ticker.C:
+		// process non empty batch
+		if len(bat.batch) > 0 {
+			err = bat.processBatch(TriggerTicker)
+		}
+
+	case value := <-bat.queue:
+		bat.batch = append(bat.batch, value)
+		// process batch immediately if full, instead of waiting for ticker
+		if len(bat.batch) >= size {
+			err = bat.processBatch(TriggerFull)
+		}
+	}
+
+	if err != nil && bat.cfg.ProcessorErr != nil {
+		bat.cfg.ProcessorErr(bat.batch, err)
+	}
+
+	return err
 }
 
 func New[T any](cfg *Config[T]) (*Nibbler[T], error) {
@@ -178,7 +186,7 @@ func New[T any](cfg *Config[T]) (*Nibbler[T], error) {
 }
 
 func Start[T any](cfg *Config[T]) (*Nibbler[T], error) {
-	bat, err := New[T](cfg)
+	bat, err := New(cfg)
 	if err != nil {
 		return nil, err
 	}
