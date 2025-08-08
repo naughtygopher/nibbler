@@ -5,16 +5,17 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/naughtygopher/nibbler?cache_invalidate=1)](https://goreportcard.com/report/github.com/naughtygopher/nibbler)
 [![Coverage Status](https://coveralls.io/repos/github/naughtygopher/nibbler/badge.svg?branch=main&cache_invalidate=1)](https://coveralls.io/github/naughtygopher/nibbler?branch=main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/creativecreature/sturdyc/blob/master/LICENSE)
+[![Mentioned in Awesome Go](https://awesome.re/mentioned-badge.svg)](https://github.com/avelino/awesome-go#stream-processing)
 
 # Nibbler
 
-Nibbler is a resilient, minimal, package which helps you implement micro-batch processing, within an application. Nibbler remains minimal with its 0 external dependencies and remains resilient within the context of the application by gracefully handling errors and panics.
+Nibbler is a resilient & minimal package which helps you implement micro-batch processing, _within an application_. Nibbler remains minimal with its 0 external dependencies and remains resilient within the context of the application by gracefully handling errors and panics.
 
-IMPORTANT: This is not a general purpose distributed task queue.
+IMPORTANT: This is not a general purpose _*distributed*_ task queue.
 
 ## What is Micro-batch Processing?
 
-Micro-batch processing is a way to handle data by breaking a big task into smaller pieces and processing them one by one. This method is useful in real-time data or streaming situations, wher ,the incoming data is split into "micro-batches" and processed quickly, rather than waiting to collect all data at once.
+Micro-batch processing is a way to handle data by breaking a big task into smaller pieces and processing them one piece at a time. This method is useful in processing realtime data or stream processing, where the incoming data is split into "micro-batches" and processed quickly, rather than waiting to collect all data at once or process one by one.
 
 The same concept can also be extended to handle events processing. So, we have a queue subscriber, and instead of processing the events individually, we create micro batches and process them.
 
@@ -26,7 +27,7 @@ The processing of a single micro batch can be triggered in two ways, based on a 
 
 ## Why use nibbler?
 
-In any high throughput event/stream processing, it is imperative to process them in batches instead of individually. Processing events in batches when done properly optimizes usage of the downstream dependencies like databases, external systems (if they support) etc by significantly reducing [IOPS](https://en.wikipedia.org/wiki/IOPS). When deciding on how to process batches, it is important to still be able to process them realtime or near realtime. So, if we wait for a batch to be "full", and for any reason if the batch is not full fast enough, then processing would be indefinitely delayed. Hence the batches have to be flushed periodically, based on an acceptable tradeoff. The tradeoff in this case is, when the batch is not filled very fast, then we lose near realtime processing, rather would only be processed every N seconds/minute/duration.
+In any high throughput event/stream processing, it is imperative to process them in batches instead of individually. Processing events in batches when done properly optimize usage of the downstream dependencies like databases, external systems (if they support) etc by significantly reducing [IOPS](https://en.wikipedia.org/wiki/IOPS). When deciding on how to process batches, it is important to still be able to process them realtime or near realtime. So, if we wait for a batch to be "full", and for any reason if the batch is not full fast enough, then processing would be indefinitely delayed. Hence the batches have to be flushed periodically, based on an acceptable tradeoff. The tradeoff in this case is, when the batch is not filled very fast, then we lose near realtime processing, rather would only be processed every N seconds/minute/duration.
 
 ### Config
 
@@ -161,4 +162,4 @@ You can find all usage details in the tests.
 ## The gopher
 
 The gopher used here was created using [Gopherize.me](https://gopherize.me/). Nibbler is out there eating your events/streams
-one bite at a time.
+one chunky bite at a time.
