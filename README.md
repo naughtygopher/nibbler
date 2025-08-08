@@ -37,7 +37,7 @@ type BatchProcessor[T any] func(ctx context.Context, trigger trigger, batch []T)
 type Config[T any] struct {
 	// ProcessingTimeout is context timeout for processing a single batch. If less than 1ms, defaults to 1s
 	ProcessingTimeout time.Duration
-	// TickerDuration is the duration after which an non-empty batch would be flushed. If less than 1ms, defaults to 1s
+	// TickerDuration is the duration after which a non-empty batch would be flushed. If less than 1ms, defaults to 1s
 	TickerDuration time.Duration
 
 	// Size is the micro batch size. If 0, defaults to 100
