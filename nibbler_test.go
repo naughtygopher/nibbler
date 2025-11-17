@@ -161,7 +161,7 @@ func TestProcessorErr(tt *testing.T) {
 		nib, err := Start(&Config[string]{
 			TickerDuration: time.Second,
 			Processor: func(_ context.Context, _ Trigger, _ []string) error {
-				panic(errProcessing)
+				panic(errProcessing) //nolint:gocritic
 			},
 			ProcessorErr: func(failedBatch []string, err error) {
 				asserter.ErrorIs(err, errProcessing)
