@@ -160,10 +160,9 @@ func TestProcessorErr(tt *testing.T) {
 
 		nib, err := Start(&Config[string]{
 			TickerDuration: time.Second,
-			Processor: func(_ context.Context, _ Trigger, _ []string) error {
+			Processor: func(_ context.Context, _ Trigger, _ []string) error { //nolint:typecheck
 				panic(errProcessing)
 			},
-			//nolint:typecheck
 			ProcessorErr: func(failedBatch []string, err error) {
 				asserter.ErrorIs(err, errProcessing)
 				asserter.ElementsMatch([]string{"hello"}, failedBatch)
