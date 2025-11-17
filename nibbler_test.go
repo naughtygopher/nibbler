@@ -162,7 +162,8 @@ func TestProcessorErr(tt *testing.T) {
 			TickerDuration: time.Second,
 			Processor: func(_ context.Context, _ Trigger, _ []string) error {
 				panic(errProcessing)
-			}, //nolint:typecheck
+			},
+			//nolint:typecheck
 			ProcessorErr: func(failedBatch []string, err error) {
 				asserter.ErrorIs(err, errProcessing)
 				asserter.ElementsMatch([]string{"hello"}, failedBatch)
