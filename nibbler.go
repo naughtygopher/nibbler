@@ -155,6 +155,7 @@ func (bat *Nibbler[T]) listener(ticker *time.Ticker, size int) (err error) {
 		// process non empty batch
 		if len(bat.batch) > 0 {
 			err = bat.processBatch(TriggerTicker)
+			ticker.Reset(bat.cfg.TickerDuration)
 		}
 
 	case value := <-bat.queue:
@@ -162,6 +163,7 @@ func (bat *Nibbler[T]) listener(ticker *time.Ticker, size int) (err error) {
 		// process batch immediately if full, instead of waiting for ticker
 		if len(bat.batch) >= size {
 			err = bat.processBatch(TriggerFull)
+			ticker.Reset(bat.cfg.TickerDuration)
 		}
 	}
 
