@@ -150,6 +150,10 @@ func (bat *Nibbler[T]) Listen() {
 }
 
 func (bat *Nibbler[T]) listener(ticker *time.Ticker, size int) (err error) {
+	defer func() {
+		ticker.Reset(bat.cfg.TickerDuration)
+	}()
+
 	select {
 	case <-ticker.C:
 		// process non empty batch
