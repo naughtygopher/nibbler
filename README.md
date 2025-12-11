@@ -27,7 +27,19 @@ The processing of a single micro batch can be triggered in two ways, based on a 
 
 ## Why use nibbler?
 
-In any high throughput event/stream processing, it is imperative to process events in batches instead of individually. Processing events in batches when done properly optimizes the usage of the downstream dependencies like databases, external systems (if they support) etc by significantly reducing [IOPS](https://en.wikipedia.org/wiki/IOPS). When deciding on how to process batches, it is important to still be able to process them realtime or near realtime. So, if we wait for a batch to be "full", and for any reason if the batch is not full fast enough, then processing would be indefinitely delayed. Hence the batches have to be flushed periodically, based on an acceptable tradeoff. The tradeoff in this case is, when the batch is not filled very fast, then we lose near realtime processing, rather would only be processed every N seconds/minute/duration.
+High-throughput event and stream processing systems benefit significantly from batch processing rather than handling events individually. Well-implemented batching optimizes resource utilization across downstream dependencies like databases, APIs, and external systems-by dramatically reducing [IOPS](https://en.wikipedia.org/wiki/IOPS). Batch operations enable more efficient use of network round-trips, connection pools, and database transaction overhead. For example, a single bulk INSERT of 100 rows is substantially cheaper than 100 individual INSERT statements, both in terms of I/O operations and connection utilization.
+
+However, batching introduces a latency tradeoff. A naive implementation that waits for a batch to reach full capacity before processing will delay event handling indefinitely during low-traffic periods. If your batch size is 100 and events arrive at 1 per second, you'd wait over a minute and a half before any processing occurs-unacceptable for systems requiring near-realtime responsiveness.
+
+Nibbler addresses this with a dual-trigger flush mechanism: batches are processed either when they reach a configured size threshold or when a time interval elapses; whichever occurs first. This bounded-latency approach ensures:
+
+1. **High throughput scenarios**: Batches fill quickly and flush at capacity, maximizing I/O efficiency
+
+2. **Low throughput scenarios**: Partial batches flush at the configured interval, guaranteeing a maximum processing delay
+
+3. **Variable load patterns**: The system self-adjusts without manual intervention, processing full batches during traffic spikes while maintaining responsiveness during quiet periods
+
+The configurable flush interval (TickerDuration) represents your maximum acceptable latency. The worst-case delay between event arrival and processing. The batch size (Size) determines your maximum I/O optimization. Together, these parameters let you tune the latency-efficiency tradeoff to match your specific requirements.
 
 ### Config
 
