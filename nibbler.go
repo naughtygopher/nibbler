@@ -8,6 +8,10 @@
 // The batch slice is reused after the processor returns. Copy it, e.g. with slices.Clone,
 // before retaining it or passing it to another goroutine.
 //
+// Delivery: an item is handed to the processor at most once, a failed batch is never retried.
+// With Config.FlushOnStop, and producers stopped before cancelling the listener's context,
+// every item sent is handed to the processor.
+//
 // Listen runs until its context is done. Pending items are then dropped, unless
 // Config.FlushOnStop is enabled, in which case they are processed with TriggerStop.
 // Done and Err are used to wait for the listener and get the reason it stopped.
@@ -45,6 +49,8 @@ const (
 
 // BatchProcessor processes a single batch. ctx is done when ProcessingTimeout elapses, or when the
 // listener's context is done. The batch slice is reused after it returns, and must not be retained.
+// If it calls runtime.Goexit, e.g. testing.T.FailNow, the listener stops without a reason: Done is
+// closed and Err returns nil.
 type BatchProcessor[T any] func(ctx context.Context, trigger Trigger, batch []T) error
 
 // Config is the configuration of a Nibbler
@@ -61,7 +67,8 @@ type Config[T any] struct {
 	QueueSize uint
 
 	// Processor is a required configuration, it is called when a batch process is initiated either by
-	// ticker or when the batch is full. The 'batch' slice received must not be changed, if you have to
+	// the timer (TriggerTicker), when the batch is full (TriggerFull) or when pending items are
+	// flushed on stop (TriggerStop). The 'batch' slice received must not be changed, if you have to
 	// process the batch asynchronously, copy the batch to a new slice prior to sending it to a Go routine.
 	Processor BatchProcessor[T]
 
@@ -135,9 +142,12 @@ func panicErr(rec any) error {
 }
 
 func (bat *Nibbler[T]) processBatch(ctx context.Context, trigger Trigger) (err error) {
+	// recover returns nil for panic(nil) if GODEBUG=panicnil=1 is set, which is the default for
+	// modules declaring Go older than 1.21. So a panic is detected by the processor not having returned.
+	returned := false
 	defer func() {
-		if rec := recover(); rec != nil {
-			err = panicErr(rec)
+		if !returned {
+			err = panicErr(recover())
 		}
 	}()
 
@@ -145,6 +155,7 @@ func (bat *Nibbler[T]) processBatch(ctx context.Context, trigger Trigger) (err e
 	defer cancel()
 
 	err = bat.cfg.Processor(ctx, trigger, bat.batch)
+	returned = true
 	if err != nil {
 		return err
 	}
@@ -167,7 +178,8 @@ func (bat *Nibbler[T]) Receiver() chan<- T {
 	return bat.queue
 }
 
-// Done returns a channel which is closed when Listen returns
+// Done returns a channel which is closed when Listen returns. If Listen is never called, it is
+// never closed.
 func (bat *Nibbler[T]) Done() <-chan struct{} {
 	return bat.done
 }

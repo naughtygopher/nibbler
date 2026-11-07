@@ -299,6 +299,8 @@ func TestProcessingTimeout(tt *testing.T) {
 			timeout  = 3 * time.Second
 			deadline = make(chan time.Duration, 1)
 			expired  = make(chan error, 1)
+			// -1 if the context has no deadline, require must not be called from the processor goroutine
+			noDeadline = time.Duration(-1)
 		)
 		ctx, cancel := context.WithCancel(t.Context())
 		nib, err := Start(ctx, &Config[int]{
@@ -306,8 +308,11 @@ func TestProcessingTimeout(tt *testing.T) {
 			ProcessingTimeout: timeout,
 			Processor: func(ctx context.Context, _ Trigger, _ []int) error {
 				dl, ok := ctx.Deadline()
-				require.True(t, ok)
-				deadline <- time.Until(dl)
+				if !ok {
+					deadline <- noDeadline
+				} else {
+					deadline <- time.Until(dl)
+				}
 				<-ctx.Done()
 				expired <- ctx.Err()
 				return nil
