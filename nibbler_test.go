@@ -328,13 +328,19 @@ func TestProcessorErr(tt *testing.T) {
 		{
 			name:      "panic recovery without resume",
 			processor: panicker(errProcessing),
-			assertErr: func(t *testing.T, err error) { assert.ErrorIs(t, err, errProcessing) },
+			assertErr: func(t *testing.T, err error) {
+				assert.ErrorIs(t, err, ErrPanic)
+				assert.ErrorIs(t, err, errProcessing)
+			},
 		},
 		{
 			name:      "panic recovery with resume and non error panic",
 			resume:    true,
 			processor: panicker("processor panic"),
-			assertErr: func(t *testing.T, err error) { assert.ErrorContains(t, err, "processor panic") },
+			assertErr: func(t *testing.T, err error) {
+				assert.ErrorIs(t, err, ErrPanic)
+				assert.ErrorContains(t, err, "processor panic")
+			},
 		},
 	}
 
@@ -381,6 +387,56 @@ func TestProcessorErr(tt *testing.T) {
 			})
 		})
 	}
+}
+
+func TestPanicErr(tt *testing.T) {
+	tt.Run("error value", func(t *testing.T) {
+		err := panicErr(errProcessing)
+		require.ErrorIs(t, err, ErrPanic)
+		require.ErrorIs(t, err, errProcessing)
+		require.Equal(t, "processor panicked: failed processing", err.Error())
+	})
+
+	tt.Run("non error value", func(t *testing.T) {
+		err := panicErr(42)
+		require.ErrorIs(t, err, ErrPanic)
+		require.Equal(t, "processor panicked: 42", err.Error())
+	})
+}
+
+func TestProcessorErrPanics(tt *testing.T) {
+	synctest.Test(tt, func(t *testing.T) {
+		var (
+			rec   = &recorder[int]{}
+			calls = 0
+		)
+		ctx, cancel := context.WithCancel(t.Context())
+		nib, err := Start(ctx, &Config[int]{
+			Size:           1,
+			ResumeAfterErr: true,
+			Processor: func(c context.Context, trigger Trigger, batch []int) error {
+				calls++
+				if calls == 1 {
+					return errProcessing
+				}
+				return rec.processor(nil)(c, trigger, batch)
+			},
+			ProcessorErr: func(_ []int, _ error) {
+				panic("error handler panic")
+			},
+		})
+		require.NoError(t, err)
+
+		nib.Receiver() <- 1
+		nib.Receiver() <- 2
+		synctest.Wait()
+
+		require.False(t, isClosed(nib.Done()))
+		require.Equal(t, [][]int{{2}}, rec.Batches())
+
+		cancel()
+		<-nib.Done()
+	})
 }
 
 func TestDroppedOnStop(tt *testing.T) {
