@@ -251,15 +251,30 @@ func (bat *Nibbler[T]) listener(ctx context.Context, timer *time.Timer, size int
 		err = bat.processBatch(ctx, TriggerTicker)
 
 	case value := <-bat.queue:
+		first := len(bat.batch) == 0
 		bat.batch = append(bat.batch, value)
+		// pick up items already buffered without going through select for each of them
+	drain:
+		for len(bat.batch) < size {
+			select {
+			case value = <-bat.queue:
+				bat.batch = append(bat.batch, value)
+			default:
+				break drain
+			}
+		}
+
 		if len(bat.batch) < size {
-			if len(bat.batch) == 1 {
+			if first {
 				timer.Reset(bat.cfg.TickerDuration)
 			}
 			return nil
 		}
+
 		// process batch immediately if full, instead of waiting for the timer
-		timer.Stop()
+		if !first {
+			timer.Stop()
+		}
 		err = bat.processBatch(ctx, TriggerFull)
 	}
 

@@ -185,6 +185,37 @@ func TestTimerStoppedOnFull(tt *testing.T) {
 	})
 }
 
+func TestBufferedItemsBatched(tt *testing.T) {
+	synctest.Test(tt, func(t *testing.T) {
+		rec := &recorder[int]{}
+		nib, err := New(&Config[int]{
+			Size:           4,
+			QueueSize:      10,
+			TickerDuration: time.Second,
+			Processor:      rec.processor(nil),
+		})
+		require.NoError(t, err)
+
+		// items buffered before the listener starts
+		for i := range 6 {
+			nib.Receiver() <- i
+		}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		go func() { _ = nib.Listen(ctx) }()
+		synctest.Wait()
+		require.Equal(t, [][]int{{0, 1, 2, 3}}, rec.Batches())
+
+		time.Sleep(time.Second)
+		synctest.Wait()
+		require.Equal(t, [][]int{{0, 1, 2, 3}, {4, 5}}, rec.Batches())
+		require.Equal(t, []Trigger{TriggerFull, TriggerTicker}, rec.Triggers())
+
+		cancel()
+		<-nib.Done()
+	})
+}
+
 func TestListenStopsOnCancel(tt *testing.T) {
 	synctest.Test(tt, func(t *testing.T) {
 		nib, err := New(&Config[int]{Processor: (&recorder[int]{}).processor(nil)})
