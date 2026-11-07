@@ -28,6 +28,8 @@ type Trigger string
 const (
 	TriggerTicker Trigger = "TICKER"
 	TriggerFull   Trigger = "BATCH_FULL"
+	// TriggerStop is used for batches flushed after the listener is stopped, see Config.FlushOnStop
+	TriggerStop Trigger = "STOP"
 )
 
 type BatchProcessor[T any] func(ctx context.Context, trigger Trigger, batch []T) error
@@ -54,6 +56,15 @@ type Config[T any] struct {
 	ResumeAfterErr bool
 	// ProcessorErr is the function which is executed if processor encounters an error or panic
 	ProcessorErr func(failedBatch []T, err error)
+
+	// FlushOnStop if true processes pending items when Listen stops because its context is done,
+	// instead of dropping them. Pending items are the partial batch and the items buffered in the
+	// receiver at the time of stop, they're processed with TriggerStop. The flush is not cancelled
+	// by the listener's context, but every batch is still limited by ProcessingTimeout. Errors are
+	// reported to ProcessorErr and flushing continues irrespective of ResumeAfterErr. A batch which
+	// already failed is not retried. Stop producers before cancelling, items sent during the flush
+	// are dropped.
+	FlushOnStop bool
 }
 
 func (cfg *Config[T]) Sanitize() {
@@ -153,8 +164,9 @@ func (bat *Nibbler[T]) Err() error {
 
 // Listen listens to the receiver channel for processing the micro batches. It blocks until
 // ctx is done, or until the processor fails while ResumeAfterErr is disabled. It returns
-// context.Cause(ctx) or the processor error respectively. Items pending at stop are dropped.
-// Listen must be called at most once per Nibbler, subsequent calls return ErrAlreadyListening.
+// context.Cause(ctx) or the processor error respectively. Items pending at stop are dropped,
+// unless FlushOnStop is enabled. Listen must be called at most once per Nibbler, subsequent
+// calls return ErrAlreadyListening.
 func (bat *Nibbler[T]) Listen(ctx context.Context) error {
 	if !bat.listening.CompareAndSwap(false, true) {
 		return ErrAlreadyListening
@@ -163,7 +175,10 @@ func (bat *Nibbler[T]) Listen(ctx context.Context) error {
 	defer close(bat.done)
 
 	bat.err = bat.listen(ctx)
-	// pending items are dropped, release them
+	if bat.cfg.FlushOnStop && ctx.Err() != nil {
+		bat.flush(context.WithoutCancel(ctx))
+	}
+	// remaining items are dropped, release them
 	bat.reset()
 
 	return bat.err
@@ -190,12 +205,34 @@ func (bat *Nibbler[T]) listen(ctx context.Context) error {
 			continue
 		}
 
+		// The failed batch is reset after it is reported, it is neither retried nor flushed on stop
+		bat.reset()
 		if !bat.cfg.ResumeAfterErr {
 			return err
 		}
+	}
+}
 
-		// The batch is reset to go past the failed batch if resume after error is enabled.
-		// There's no advantage of keeping the failed batch if resume is enabled
+// flush processes the partial batch and the items buffered in the receiver. It is bounded by
+// the number of buffered items when it starts, so producers still sending cannot prolong it.
+func (bat *Nibbler[T]) flush(ctx context.Context) {
+	size := int(bat.cfg.Size)
+	for range len(bat.queue) {
+		bat.batch = append(bat.batch, <-bat.queue)
+		if len(bat.batch) >= size {
+			bat.flushBatch(ctx)
+		}
+	}
+
+	if len(bat.batch) > 0 {
+		bat.flushBatch(ctx)
+	}
+}
+
+func (bat *Nibbler[T]) flushBatch(ctx context.Context) {
+	err := bat.processBatch(ctx, TriggerStop)
+	if err != nil {
+		bat.reportErr(err)
 		bat.reset()
 	}
 }

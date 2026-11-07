@@ -656,6 +656,180 @@ func TestBatchReleased(tt *testing.T) {
 	})
 }
 
+func TestFlushOnStop(tt *testing.T) {
+	type call struct {
+		trigger Trigger
+		batch   []int
+		ctxErr  error
+	}
+
+	// newFlusher returns a Nibbler whose first batch blocks until its context is done, so items
+	// can be queued while the listener is busy
+	newFlusher := func(t *testing.T, size uint, calls chan<- call, processorErr error) *Nibbler[int] {
+		t.Helper()
+		first := true
+		nib, err := New(&Config[int]{
+			Size:           size,
+			QueueSize:      10,
+			TickerDuration: time.Hour,
+			FlushOnStop:    true,
+			Processor: func(ctx context.Context, trigger Trigger, batch []int) error {
+				if first {
+					first = false
+					<-ctx.Done()
+				}
+				calls <- call{trigger: trigger, batch: slices.Clone(batch), ctxErr: ctx.Err()}
+				if trigger == TriggerStop {
+					return processorErr
+				}
+				return nil
+			},
+			ProcessorErr: func(_ []int, err error) {
+				assert.ErrorIs(t, err, processorErr)
+			},
+		})
+		require.NoError(t, err)
+		return nib
+	}
+
+	collect := func(calls chan call) []call {
+		close(calls)
+		var got []call
+		for c := range calls {
+			got = append(got, c)
+		}
+		return got
+	}
+
+	tt.Run("partial batch and queued items", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			calls := make(chan call, 10)
+			nib := newFlusher(t, 3, calls, nil)
+			ctx, cancel := context.WithCancel(t.Context())
+			go func() { _ = nib.Listen(ctx) }()
+
+			for i := range 7 {
+				nib.Receiver() <- i
+			}
+			synctest.Wait()
+			cancel()
+			<-nib.Done()
+
+			require.ErrorIs(t, nib.Err(), context.Canceled)
+			require.Equal(t, []call{
+				{trigger: TriggerFull, batch: []int{0, 1, 2}, ctxErr: context.Canceled},
+				{trigger: TriggerStop, batch: []int{3, 4, 5}},
+				{trigger: TriggerStop, batch: []int{6}},
+			}, collect(calls))
+		})
+	})
+
+	tt.Run("errors do not stop the flush", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			calls := make(chan call, 10)
+			nib := newFlusher(t, 2, calls, errProcessing)
+			ctx, cancel := context.WithCancel(t.Context())
+			go func() { _ = nib.Listen(ctx) }()
+
+			for i := range 5 {
+				nib.Receiver() <- i
+			}
+			synctest.Wait()
+			cancel()
+			<-nib.Done()
+
+			require.Equal(t, []call{
+				{trigger: TriggerFull, batch: []int{0, 1}, ctxErr: context.Canceled},
+				{trigger: TriggerStop, batch: []int{2, 3}},
+				{trigger: TriggerStop, batch: []int{4}},
+			}, collect(calls))
+		})
+	})
+
+	tt.Run("bounded by items queued at stop", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rec := &recorder[int]{}
+			var nib *Nibbler[int]
+			nib, err := New(&Config[int]{
+				Size:           10,
+				TickerDuration: time.Hour,
+				FlushOnStop:    true,
+				Processor: func(ctx context.Context, trigger Trigger, batch []int) error {
+					// a producer which keeps sending during the flush
+					select {
+					case nib.Receiver() <- 99:
+					default:
+					}
+					return rec.processor(nil)(ctx, trigger, batch)
+				},
+			})
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithCancel(t.Context())
+			go func() { _ = nib.Listen(ctx) }()
+			nib.Receiver() <- 1
+			synctest.Wait()
+			cancel()
+			<-nib.Done()
+
+			require.Equal(t, [][]int{{1}}, rec.Batches())
+			require.Equal(t, []Trigger{TriggerStop}, rec.Triggers())
+		})
+	})
+
+	tt.Run("failed batch is not retried", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rec := &recorder[int]{}
+			ctx, cancel := context.WithCancel(t.Context())
+			nib, err := Start(ctx, &Config[int]{
+				Size:           2,
+				TickerDuration: time.Hour,
+				FlushOnStop:    true,
+				Processor: func(ctx context.Context, trigger Trigger, batch []int) error {
+					_ = rec.processor(nil)(ctx, trigger, batch)
+					if trigger == TriggerFull {
+						cancel()
+						return errProcessing
+					}
+					return nil
+				},
+			})
+			require.NoError(t, err)
+
+			nib.Receiver() <- 1
+			nib.Receiver() <- 2
+			<-nib.Done()
+
+			require.ErrorIs(t, nib.Err(), errProcessing)
+			require.Equal(t, [][]int{{1, 2}}, rec.Batches())
+		})
+	})
+
+	tt.Run("no flush on processor error without cancellation", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rec := &recorder[int]{}
+			nib, err := Start(t.Context(), &Config[int]{
+				Size:           1,
+				QueueSize:      10,
+				TickerDuration: time.Hour,
+				FlushOnStop:    true,
+				Processor: func(ctx context.Context, trigger Trigger, batch []int) error {
+					_ = rec.processor(nil)(ctx, trigger, batch)
+					return errProcessing
+				},
+			})
+			require.NoError(t, err)
+
+			nib.Receiver() <- 1
+			<-nib.Done()
+			nib.Receiver() <- 2
+			synctest.Wait()
+
+			require.Equal(t, [][]int{{1}}, rec.Batches())
+		})
+	})
+}
+
 func TestSanitizeValidate(tt *testing.T) {
 	var (
 		processor = func(ctx context.Context, trigger Trigger, batch []string) error { return nil }
