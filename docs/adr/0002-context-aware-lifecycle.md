@@ -44,6 +44,19 @@ Tests run on `testing/synctest`, so tickers and timeouts use a fake clock and th
 - Producers can no longer panic on send. If the listener may stop, producers should `select` on `Done()` when sending, otherwise a full receiver blocks forever
 - Cancelling the parent context aborts in-flight processing; the processor sees it via `ctx.Done()`
 - pocache can run `Listen(ctx)` inside its worker `WaitGroup` and join it on close
+- Each batch context is now derived from the listener's context instead of `context.Background()`. When that context can be cancelled, `context.WithTimeout` registers the batch context with it and unregisters it afterwards, which costs ~100 ns per batch (see below)
+
+### Measured cost
+
+Measured after the fact, with the benchmarks from [0004](0004-benchmark-backed-performance.md), on Intel i7-14700, Go 1.27.3, 10 runs each, compared with `benchstat`. v0.2.2 is the last release before this ADR, v0.3.0 includes every later ADR as well. The last column is v0.3.0 with an uncancellable `context.Background()` as the listener context, which isolates this ADR's cost.
+
+| Benchmark | v0.2.2 (ns/item) | v0.3.0 (ns/item) | v0.3.0, `context.Background()` (ns/item) |
+|---|---|---|---|
+| `Throughput/size=1` | 546.8 | 612.9 (slower, +12%) | 520.4 (faster, -5%) |
+| `Throughput/size=10` | 124.5 | 112.7 (faster, -10%) | 101.9 (faster, -18%) |
+| `Throughput/size=100` | 61.6 | 35.9 (faster, -42%) | 34.5 (faster, -44%) |
+
+The cost is per batch, not per item. It is visible at `size=1`, where it is the whole batch, and ~11 ns/item at `size=10`. From `size=100` it is lost in the noise. The later ADRs ([0007](0007-flush-timer-armed-on-first-item.md), [0009](0009-greedy-drain.md)) more than pay for it from `size=10` onwards. A batch size of 1 is not batching, so this is accepted. Removing the cost would need a custom `context.Context` implementation or dropping cancellation of in-flight batches, neither is worth it.
 
 ## Alternatives considered
 

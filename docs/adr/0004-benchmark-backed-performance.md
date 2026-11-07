@@ -35,6 +35,8 @@ Intel i7-14700, 28 threads, Go 1.27.3, after ADR 0003.
 | `Throughput/size=1000` | 101.8 ± 1% | 0 | 0 |
 | `ThroughputParallel/size=100` | 145.7 ± 2% | 2 | 0 |
 
+This baseline already includes the cost of [0002](0002-context-aware-lifecycle.md), which derives batch contexts from the listener's context. The performance PRs which follow are measured against it, so their gains are relative to it. Compared with the v0.2.2 release itself, see the table in [0002](0002-context-aware-lifecycle.md#measured-cost).
+
 The listener itself does not allocate per item. The 272 B and 4 allocations are per batch, from `context.WithTimeout` for the batch context, and amortise to ~0 from `size=100` onwards.
 
 ## Consequences
