@@ -18,6 +18,9 @@ var (
 	ErrValidation = errors.New("validation failed")
 	// ErrAlreadyListening is returned by Listen if it is called more than once on the same Nibbler
 	ErrAlreadyListening = errors.New("nibbler is already listening")
+	// ErrPanic wraps the value recovered from a panicking processor. If the panic value is an
+	// error, it is wrapped as well, so both errors.Is(err, ErrPanic) and errors.Is(err, value) hold.
+	ErrPanic = errors.New("processor panicked")
 )
 
 type Trigger string
@@ -92,26 +95,18 @@ type Nibbler[T any] struct {
 	listening atomic.Bool
 }
 
-func (bat *Nibbler[T]) panicRecovery(rec any, err error) error {
-	if err != nil {
-		return err
+func panicErr(rec any) error {
+	if err, ok := rec.(error); ok {
+		return fmt.Errorf("%w: %w", ErrPanic, err)
 	}
-
-	if rec == nil {
-		return nil
-	}
-
-	err, iserror := rec.(error)
-	if !iserror {
-		err = fmt.Errorf("%+v", rec)
-	}
-
-	return err
+	return fmt.Errorf("%w: %v", ErrPanic, rec)
 }
 
 func (bat *Nibbler[T]) processBatch(ctx context.Context, trigger Trigger) (err error) {
 	defer func() {
-		err = bat.panicRecovery(recover(), err)
+		if rec := recover(); rec != nil {
+			err = panicErr(rec)
+		}
 	}()
 
 	ctx, cancel := context.WithTimeout(ctx, bat.cfg.ProcessingTimeout)
@@ -221,11 +216,21 @@ func (bat *Nibbler[T]) listener(ctx context.Context, ticker *time.Ticker, size i
 		}
 	}
 
-	if err != nil && bat.cfg.ProcessorErr != nil {
-		bat.cfg.ProcessorErr(bat.batch, err)
+	if err != nil {
+		bat.reportErr(err)
 	}
 
 	return err
+}
+
+func (bat *Nibbler[T]) reportErr(err error) {
+	if bat.cfg.ProcessorErr == nil {
+		return
+	}
+	// a panicking error handler must not kill the listener, and there is nowhere else to report it
+	defer func() { _ = recover() }()
+
+	bat.cfg.ProcessorErr(bat.batch, err)
 }
 
 // New validates the config and returns a Nibbler which is not listening yet. The config is
