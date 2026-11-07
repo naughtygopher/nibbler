@@ -187,15 +187,17 @@ workers.Go(func() { _ = nib.Listen(ctx) })
 
 ## Benchmarks
 
-End to end throughput, from pushing an item into the receiver until it is handed to a no-op processor. Intel i7-14700, Go 1.27.3.
+End to end throughput, from pushing an item into the receiver until it is handed to a no-op processor. Intel i7-14700, Go 1.27.3, the same benchmark run against both versions.
 
-| Batch size | ns/item | allocs/item |
-|---|---|---|
-| 1 | 616.5 | 4 |
-| 10 | 113.3 | 0 |
-| 100 | 35.7 | 0 |
-| 1000 | 28.9 | 0 |
-| 100, parallel producers | 61.2 | 0 |
+| Batch size | v0.2.2 (ns/item) | v0.3.0 (ns/item) | allocs/item |
+|---|---|---|---|
+| 1 | 546.8 | 612.9 | 4 |
+| 10 | 124.5 | 112.7 | 0 |
+| 100 | 61.6 | 35.9 | 0 |
+| 1000 | 62.3 | 29.2 | 0 |
+| 100, parallel producers | 98.6 | 62.9 | 0 |
+
+Lower is better. v0.3.0 is faster from batch size 10 onwards. At batch size 1 it is slower, since every batch context is now registered with the listener's context, which costs ~100 ns per batch. See [ADR 0002](docs/adr/0002-context-aware-lifecycle.md#measured-cost).
 
 The listener does not allocate per item. The allocations are per batch, for its context.
 
@@ -210,7 +212,10 @@ $ go test -run '^$' -bench . -benchmem ./...
 - The receiver is never closed. Select on `Done()` when sending, if the listener may stop
 - `TickerDuration` defaults to 1s as documented, it was 1m
 - The flush timer starts when the first item of a batch arrives, instead of ticking at a fixed interval
-- Processor panics are wrapped with `ErrPanic`
+- Processor panics are wrapped with `ErrPanic`. `errors.Is(err, original)` still matches error panic values
+- A panic within `ProcessorErr` is recovered and discarded, it used to crash the application
+- `Config` is copied by `New`, changing it afterwards has no effect
+- The batch passed to the processor and `ProcessorErr` is cleared after they return, copy it with `slices.Clone` to retain it
 - New: `QueueSize`, `FlushOnStop` & `TriggerStop`
 - Go 1.25 or newer is required
 
