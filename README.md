@@ -142,7 +142,7 @@ func main() {
 		},
 	}
 
-	nib, err := nibbler.Start(&nibbler.Config[AccStatement]{
+	nib, err := nibbler.Start(context.Background(), &nibbler.Config[AccStatement]{
 		Size:           10,
 		TickerDuration: time.Second,
 		Processor:      bnk.ProcessAccountsBatch,
