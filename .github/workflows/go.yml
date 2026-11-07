@@ -12,32 +12,34 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: ["1.25", "1.27"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v7
         with:
-          go-version: "1.25"
+          go-version: ${{ matrix.go }}
 
       - name: Build
         run: go build -v ./...
 
-      - name: Tests
-        run: |
-          go install github.com/mattn/goveralls@latest
-          go test -race -run "TestNibbler|TestSanitizeValidate"
+      - name: Vet
+        run: go vet ./...
 
-          # race check is ignored for this because of how the test (TestProcessorErr) itself relies
-          # on a panic, when pushing to a closed channel
-          go test -covermode atomic -coverprofile=covprofile ./...
+      - name: Tests
+        run: go test -race -covermode atomic -coverprofile=covprofile ./...
 
       - name: Send coverage
+        if: matrix.go == '1.27'
         uses: shogo82148/actions-goveralls@v1
         with:
           path-to-profile: covprofile
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        if: matrix.go == '1.27'
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.6
+          version: v2.15

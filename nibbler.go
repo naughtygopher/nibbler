@@ -10,10 +10,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
-var ErrValidation = errors.New("validation failed")
+var (
+	ErrValidation = errors.New("validation failed")
+	// ErrAlreadyListening is returned by Listen if it is called more than once on the same Nibbler
+	ErrAlreadyListening = errors.New("nibbler is already listening")
+)
 
 type Trigger string
 
@@ -73,9 +78,12 @@ func (cfg *Config[T]) SanitizeValidate() error {
 }
 
 type Nibbler[T any] struct {
-	cfg   *Config[T]
-	batch []T
-	queue chan T
+	cfg       *Config[T]
+	batch     []T
+	queue     chan T
+	done      chan struct{}
+	err       error
+	listening atomic.Bool
 }
 
 func (bat *Nibbler[T]) panicRecovery(rec any, err error) error {
@@ -95,12 +103,12 @@ func (bat *Nibbler[T]) panicRecovery(rec any, err error) error {
 	return err
 }
 
-func (bat *Nibbler[T]) processBatch(trigger Trigger) (err error) {
+func (bat *Nibbler[T]) processBatch(ctx context.Context, trigger Trigger) (err error) {
 	defer func() {
 		err = bat.panicRecovery(recover(), err)
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), bat.cfg.ProcessingTimeout)
+	ctx, cancel := context.WithTimeout(ctx, bat.cfg.ProcessingTimeout)
 	defer cancel()
 
 	err = bat.cfg.Processor(ctx, trigger, bat.batch)
@@ -116,31 +124,62 @@ func (bat *Nibbler[T]) processBatch(trigger Trigger) (err error) {
 	return err
 }
 
-// Receiver returns a write only channel for pushing items to the batch processor
+// Receiver returns a write only channel for pushing items to the batch processor.
+// The channel is never closed, if the listener may stop, select on Done when sending.
 func (bat *Nibbler[T]) Receiver() chan<- T {
 	return bat.queue
 }
 
-// Listen listens to the receiver channel for processing the micro batches
-func (bat *Nibbler[T]) Listen() {
-	var (
-		ticker = time.NewTicker(bat.cfg.TickerDuration)
-		size   = int(bat.cfg.Size)
-	)
+// Done returns a channel which is closed when Listen returns
+func (bat *Nibbler[T]) Done() <-chan struct{} {
+	return bat.done
+}
 
-	defer func() {
-		// release all resources, just in case
-		ticker.Stop()
-		close(bat.queue)
-	}()
+// Err returns nil until Done is closed. After that, it returns the reason Listen stopped.
+func (bat *Nibbler[T]) Err() error {
+	select {
+	case <-bat.done:
+		return bat.err
+	default:
+		return nil
+	}
+}
 
+// Listen listens to the receiver channel for processing the micro batches. It blocks until
+// ctx is done, or until the processor fails while ResumeAfterErr is disabled. It returns
+// context.Cause(ctx) or the processor error respectively. Items pending at stop are dropped.
+// Listen must be called at most once per Nibbler, subsequent calls return ErrAlreadyListening.
+func (bat *Nibbler[T]) Listen(ctx context.Context) error {
+	if !bat.listening.CompareAndSwap(false, true) {
+		return ErrAlreadyListening
+	}
+	// err is written before done is closed, so reading it after <-done is race free
+	defer close(bat.done)
+
+	bat.err = bat.listen(ctx)
+
+	return bat.err
+}
+
+func (bat *Nibbler[T]) listen(ctx context.Context) error {
+	ticker := time.NewTicker(bat.cfg.TickerDuration)
+	defer ticker.Stop()
+
+	size := int(bat.cfg.Size)
 	for {
-		if err := bat.listener(ticker, size); err == nil {
+		// select picks randomly among ready cases, this check gives cancellation
+		// priority over a ready queue
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
+		}
+
+		err := bat.listener(ctx, ticker, size)
+		if err == nil {
 			continue
 		}
 
 		if !bat.cfg.ResumeAfterErr {
-			break
+			return err
 		}
 
 		// The batch is reset to go past the failed batch if resume after error is enabled.
@@ -149,12 +188,15 @@ func (bat *Nibbler[T]) Listen() {
 	}
 }
 
-func (bat *Nibbler[T]) listener(ticker *time.Ticker, size int) (err error) {
+func (bat *Nibbler[T]) listener(ctx context.Context, ticker *time.Ticker, size int) (err error) {
 	select {
+	case <-ctx.Done():
+		return nil
+
 	case <-ticker.C:
 		// process non empty batch
 		if len(bat.batch) > 0 {
-			err = bat.processBatch(TriggerTicker)
+			err = bat.processBatch(ctx, TriggerTicker)
 			ticker.Reset(bat.cfg.TickerDuration)
 		}
 
@@ -162,7 +204,7 @@ func (bat *Nibbler[T]) listener(ticker *time.Ticker, size int) (err error) {
 		bat.batch = append(bat.batch, value)
 		// process batch immediately if full, instead of waiting for ticker
 		if len(bat.batch) >= size {
-			err = bat.processBatch(TriggerFull)
+			err = bat.processBatch(ctx, TriggerFull)
 			ticker.Reset(bat.cfg.TickerDuration)
 		}
 	}
@@ -174,6 +216,7 @@ func (bat *Nibbler[T]) listener(ticker *time.Ticker, size int) (err error) {
 	return err
 }
 
+// New validates the config and returns a Nibbler which is not listening yet
 func New[T any](cfg *Config[T]) (*Nibbler[T], error) {
 	err := cfg.SanitizeValidate()
 	if err != nil {
@@ -184,16 +227,21 @@ func New[T any](cfg *Config[T]) (*Nibbler[T], error) {
 		cfg:   cfg,
 		batch: make([]T, 0, cfg.Size),
 		queue: make(chan T, cfg.Size),
+		done:  make(chan struct{}),
 	}, nil
 }
 
-func Start[T any](cfg *Config[T]) (*Nibbler[T], error) {
+// Start is New followed by `go Listen(ctx)`. Use Done to wait for the listener to stop
+// and Err to get the reason.
+func Start[T any](ctx context.Context, cfg *Config[T]) (*Nibbler[T], error) {
 	bat, err := New(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	go bat.Listen()
+	go func() {
+		_ = bat.Listen(ctx)
+	}()
 
 	return bat, nil
 }
