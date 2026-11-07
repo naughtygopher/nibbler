@@ -35,7 +35,8 @@ type BatchProcessor[T any] func(ctx context.Context, trigger Trigger, batch []T)
 type Config[T any] struct {
 	// ProcessingTimeout is context timeout for processing a single batch. If less than 1ms, defaults to 1s
 	ProcessingTimeout time.Duration
-	// TickerDuration is the duration after which a non-empty batch would be flushed. If less than 1ms, defaults to 1s
+	// TickerDuration is the maximum time an item waits before its batch is flushed. The timer
+	// starts when the first item of a batch arrives. If less than 1ms, defaults to 1s
 	TickerDuration time.Duration
 
 	// Size is the micro batch size. If 0, defaults to 100
@@ -169,8 +170,12 @@ func (bat *Nibbler[T]) Listen(ctx context.Context) error {
 }
 
 func (bat *Nibbler[T]) listen(ctx context.Context) error {
-	ticker := time.NewTicker(bat.cfg.TickerDuration)
-	defer ticker.Stop()
+	// the flush timer is armed only while the batch is non-empty, it starts when the first
+	// item of a batch arrives. So an idle listener never wakes up, and no item waits for
+	// longer than TickerDuration.
+	timer := time.NewTimer(bat.cfg.TickerDuration)
+	timer.Stop()
+	defer timer.Stop()
 
 	size := int(bat.cfg.Size)
 	for {
@@ -180,7 +185,7 @@ func (bat *Nibbler[T]) listen(ctx context.Context) error {
 			return context.Cause(ctx)
 		}
 
-		err := bat.listener(ctx, ticker, size)
+		err := bat.listener(ctx, timer, size)
 		if err == nil {
 			continue
 		}
@@ -195,25 +200,30 @@ func (bat *Nibbler[T]) listen(ctx context.Context) error {
 	}
 }
 
-func (bat *Nibbler[T]) listener(ctx context.Context, ticker *time.Ticker, size int) (err error) {
+func (bat *Nibbler[T]) listener(ctx context.Context, timer *time.Timer, size int) (err error) {
 	select {
 	case <-ctx.Done():
 		return nil
 
-	case <-ticker.C:
-		// process non empty batch
-		if len(bat.batch) > 0 {
-			err = bat.processBatch(ctx, TriggerTicker)
-			ticker.Reset(bat.cfg.TickerDuration)
+	case <-timer.C:
+		// unreachable with Go 1.23+ timers, unless the main module sets GODEBUG=asynctimerchan=1,
+		// where a stale tick can be delivered after Stop
+		if len(bat.batch) == 0 {
+			return nil
 		}
+		err = bat.processBatch(ctx, TriggerTicker)
 
 	case value := <-bat.queue:
 		bat.batch = append(bat.batch, value)
-		// process batch immediately if full, instead of waiting for ticker
-		if len(bat.batch) >= size {
-			err = bat.processBatch(ctx, TriggerFull)
-			ticker.Reset(bat.cfg.TickerDuration)
+		if len(bat.batch) < size {
+			if len(bat.batch) == 1 {
+				timer.Reset(bat.cfg.TickerDuration)
+			}
+			return nil
 		}
+		// process batch immediately if full, instead of waiting for the timer
+		timer.Stop()
+		err = bat.processBatch(ctx, TriggerFull)
 	}
 
 	if err != nil {

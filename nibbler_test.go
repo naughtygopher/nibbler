@@ -118,6 +118,73 @@ func TestNibbler(tt *testing.T) {
 	})
 }
 
+func TestFlushLatency(tt *testing.T) {
+	synctest.Test(tt, func(t *testing.T) {
+		var (
+			start   = time.Now()
+			flushed = make(chan time.Duration, 1)
+		)
+		ctx, cancel := context.WithCancel(t.Context())
+		nib, err := Start(ctx, &Config[int]{
+			Size:           10,
+			TickerDuration: time.Second,
+			Processor: func(_ context.Context, trigger Trigger, _ []int) error {
+				assert.Equal(t, TriggerTicker, trigger)
+				flushed <- time.Since(start)
+				return nil
+			},
+		})
+		require.NoError(t, err)
+
+		// the timer starts with the first item, unrelated to when the listener started
+		time.Sleep(900 * time.Millisecond)
+		nib.Receiver() <- 1
+		time.Sleep(500 * time.Millisecond)
+		nib.Receiver() <- 2
+		require.Equal(t, 1900*time.Millisecond, <-flushed)
+
+		// after an idle period, the next batch again waits exactly TickerDuration
+		time.Sleep(3*time.Second + 600*time.Millisecond)
+		nib.Receiver() <- 3
+		require.Equal(t, 6500*time.Millisecond, <-flushed)
+
+		cancel()
+		<-nib.Done()
+	})
+}
+
+func TestTimerStoppedOnFull(tt *testing.T) {
+	synctest.Test(tt, func(t *testing.T) {
+		rec := &recorder[int]{}
+		ctx, cancel := context.WithCancel(t.Context())
+		nib, err := Start(ctx, &Config[int]{
+			Size:           2,
+			TickerDuration: time.Second,
+			Processor:      rec.processor(nil),
+		})
+		require.NoError(t, err)
+
+		nib.Receiver() <- 1
+		time.Sleep(500 * time.Millisecond)
+		nib.Receiver() <- 2
+		synctest.Wait()
+
+		// the timer armed by item 1 must not flush item 3 early
+		nib.Receiver() <- 3
+		time.Sleep(999 * time.Millisecond)
+		synctest.Wait()
+		require.Equal(t, [][]int{{1, 2}}, rec.Batches())
+
+		time.Sleep(time.Millisecond)
+		synctest.Wait()
+		require.Equal(t, [][]int{{1, 2}, {3}}, rec.Batches())
+		require.Equal(t, []Trigger{TriggerFull, TriggerTicker}, rec.Triggers())
+
+		cancel()
+		<-nib.Done()
+	})
+}
+
 func TestListenStopsOnCancel(tt *testing.T) {
 	synctest.Test(tt, func(t *testing.T) {
 		nib, err := New(&Config[int]{Processor: (&recorder[int]{}).processor(nil)})
