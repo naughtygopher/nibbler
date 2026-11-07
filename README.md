@@ -2,7 +2,6 @@
 
 [![](https://github.com/naughtygopher/nibbler/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/naughtygopher/nibbler/actions)
 [![Go Reference](https://pkg.go.dev/badge/github.com/naughtygopher/nibbler.svg)](https://pkg.go.dev/github.com/naughtygopher/nibbler)
-[![Go Report Card](https://goreportcard.com/badge/github.com/naughtygopher/nibbler?cache_invalidate=1)](https://goreportcard.com/report/github.com/naughtygopher/nibbler)
 [![Coverage Status](https://coveralls.io/repos/github/naughtygopher/nibbler/badge.svg?branch=main&cache_invalidate=1)](https://coveralls.io/github/naughtygopher/nibbler?branch=main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/naughtygopher/nibbler/blob/main/LICENSE)
 [![Mentioned in Awesome Go](https://awesome.re/mentioned-badge.svg)](https://github.com/avelino/awesome-go#stream-processing)
@@ -79,11 +78,11 @@ type Config[T any] struct {
 
 A batch is processed with one of the triggers:
 
-| Trigger | When |
-|---|---|
-| `TriggerFull` | the batch has `Size` items |
-| `TriggerTicker` | `TickerDuration` has passed since the first item of the batch arrived |
-| `TriggerStop` | pending items flushed after the listener stopped, only with `FlushOnStop` |
+| Trigger         | When                                                                      |
+| --------------- | ------------------------------------------------------------------------- |
+| `TriggerFull`   | the batch has `Size` items                                                |
+| `TriggerTicker` | `TickerDuration` has passed since the first item of the batch arrived     |
+| `TriggerStop`   | pending items flushed after the listener stopped, only with `FlushOnStop` |
 
 ## How to use nibbler?
 
@@ -189,13 +188,13 @@ workers.Go(func() { _ = nib.Listen(ctx) })
 
 End to end throughput, from pushing an item into the receiver until it is handed to a no-op processor. Intel i7-14700, Go 1.27.3, the same benchmark run against both versions.
 
-| Batch size | v0.2.2 (ns/item) | v0.3.0 (ns/item) | allocs/item |
-|---|---|---|---|
-| 1 | 546.8 | 612.9 | 4 |
-| 10 | 124.5 | 112.7 | 0 |
-| 100 | 61.6 | 35.9 | 0 |
-| 1000 | 62.3 | 29.2 | 0 |
-| 100, parallel producers | 98.6 | 62.9 | 0 |
+| Batch size              | v0.2.2 (ns/item) | v0.3.0 (ns/item) | allocs/item |
+| ----------------------- | ---------------- | ---------------- | ----------- |
+| 1                       | 546.8            | 612.9            | 4           |
+| 10                      | 124.5            | 112.7            | 0           |
+| 100                     | 61.6             | 35.9             | 0           |
+| 1000                    | 62.3             | 29.2             | 0           |
+| 100, parallel producers | 98.6             | 62.9             | 0           |
 
 Lower is better. v0.3.0 is faster from batch size 10 onwards. At batch size 1 it is slower, since every batch context is now registered with the listener's context, which costs ~100 ns per batch. See [ADR 0002](docs/adr/0002-context-aware-lifecycle.md#measured-cost).
 
