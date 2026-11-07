@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"runtime"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -442,6 +443,93 @@ func TestConfigCopied(tt *testing.T) {
 
 		cancel()
 		<-nib.Done()
+	})
+}
+
+type bigItem [1 << 16]byte
+
+// pushTracked pushes a new item to the receiver, and returns a channel which is closed
+// once the item is garbage collected
+func pushTracked(receiver chan<- *bigItem) <-chan struct{} {
+	released := make(chan struct{})
+	item := &bigItem{}
+	runtime.AddCleanup(item, func(ch chan struct{}) { close(ch) }, released)
+	receiver <- item
+	return released
+}
+
+func requireReleased(t *testing.T, released <-chan struct{}) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		runtime.GC()
+		select {
+		case <-released:
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	t.Fatal("item was not garbage collected")
+}
+
+func TestBatchReleased(tt *testing.T) {
+	tt.Run("after processing", func(t *testing.T) {
+		processed := make(chan struct{}, 1)
+		nib, err := Start(t.Context(), &Config[*bigItem]{
+			Size: 2,
+			Processor: func(_ context.Context, _ Trigger, _ []*bigItem) error {
+				processed <- struct{}{}
+				return nil
+			},
+		})
+		require.NoError(t, err)
+
+		first := pushTracked(nib.Receiver())
+		second := pushTracked(nib.Receiver())
+		<-processed
+		requireReleased(t, first)
+		requireReleased(t, second)
+		runtime.KeepAlive(nib)
+	})
+
+	tt.Run("after failed batch with resume", func(t *testing.T) {
+		failed := make(chan struct{}, 1)
+		nib, err := Start(t.Context(), &Config[*bigItem]{
+			Size:           1,
+			ResumeAfterErr: true,
+			Processor: func(_ context.Context, _ Trigger, _ []*bigItem) error {
+				return errProcessing
+			},
+			ProcessorErr: func(_ []*bigItem, _ error) {
+				failed <- struct{}{}
+			},
+		})
+		require.NoError(t, err)
+
+		released := pushTracked(nib.Receiver())
+		<-failed
+		requireReleased(t, released)
+		runtime.KeepAlive(nib)
+	})
+
+	tt.Run("dropped on stop", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		nib, err := Start(ctx, &Config[*bigItem]{
+			Size:           10,
+			TickerDuration: time.Hour,
+			Processor:      func(_ context.Context, _ Trigger, _ []*bigItem) error { return nil },
+		})
+		require.NoError(t, err)
+
+		released := pushTracked(nib.Receiver())
+		// wait until the listener has moved the item from the receiver to the batch
+		for len(nib.Receiver()) > 0 {
+			runtime.Gosched()
+		}
+		cancel()
+		<-nib.Done()
+		requireReleased(t, released)
+		runtime.KeepAlive(nib)
 	})
 }
 

@@ -122,12 +122,16 @@ func (bat *Nibbler[T]) processBatch(ctx context.Context, trigger Trigger) (err e
 		return err
 	}
 
-	// Batch is reset after successfully processing it
-	// explicit reset to reuse already allocated memory, and also not to accidentally
-	// use items from previous batch.
-	bat.batch = bat.batch[:0]
+	bat.reset()
 
 	return err
+}
+
+// reset empties the batch while reusing its memory. Items are zeroed first, otherwise the
+// backing array keeps already processed items reachable and they cannot be garbage collected.
+func (bat *Nibbler[T]) reset() {
+	clear(bat.batch)
+	bat.batch = bat.batch[:0]
 }
 
 // Receiver returns a write only channel for pushing items to the batch processor.
@@ -163,6 +167,8 @@ func (bat *Nibbler[T]) Listen(ctx context.Context) error {
 	defer close(bat.done)
 
 	bat.err = bat.listen(ctx)
+	// pending items are dropped, release them
+	bat.reset()
 
 	return bat.err
 }
@@ -190,7 +196,7 @@ func (bat *Nibbler[T]) listen(ctx context.Context) error {
 
 		// The batch is reset to go past the failed batch if resume after error is enabled.
 		// There's no advantage of keeping the failed batch if resume is enabled
-		bat.batch = bat.batch[:0]
+		bat.reset()
 	}
 }
 
