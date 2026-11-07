@@ -1,9 +1,16 @@
-// Package nibbler provides a simple interface for micro-batch processing
-/*
-Each micro batch can start processing when either of the conditions are fulfilled
-1. When the ticker ticks
-2. When the batch is "full"
-*/
+// Package nibbler provides micro-batch processing within an application.
+//
+// Items pushed to the Receiver are collected into a batch, which is handed to the
+// BatchProcessor when either of the conditions are fulfilled:
+//  1. The batch is full, i.e. it has Config.Size items (TriggerFull)
+//  2. Config.TickerDuration has passed since the first item of the batch arrived (TriggerTicker)
+//
+// The batch slice is reused after the processor returns. Copy it, e.g. with slices.Clone,
+// before retaining it or passing it to another goroutine.
+//
+// Listen runs until its context is done. Pending items are then dropped, unless
+// Config.FlushOnStop is enabled, in which case they are processed with TriggerStop.
+// Done and Err are used to wait for the listener and get the reason it stopped.
 package nibbler
 
 import (
@@ -15,6 +22,7 @@ import (
 )
 
 var (
+	// ErrValidation is returned when Config validation fails
 	ErrValidation = errors.New("validation failed")
 	// ErrAlreadyListening is returned by Listen if it is called more than once on the same Nibbler
 	ErrAlreadyListening = errors.New("nibbler is already listening")
@@ -23,17 +31,23 @@ var (
 	ErrPanic = errors.New("processor panicked")
 )
 
+// Trigger is the reason a batch is processed
 type Trigger string
 
 const (
+	// TriggerTicker is used when Config.TickerDuration has passed since the first item of the batch arrived
 	TriggerTicker Trigger = "TICKER"
-	TriggerFull   Trigger = "BATCH_FULL"
+	// TriggerFull is used when the batch has Config.Size items
+	TriggerFull Trigger = "BATCH_FULL"
 	// TriggerStop is used for batches flushed after the listener is stopped, see Config.FlushOnStop
 	TriggerStop Trigger = "STOP"
 )
 
+// BatchProcessor processes a single batch. ctx is done when ProcessingTimeout elapses, or when the
+// listener's context is done. The batch slice is reused after it returns, and must not be retained.
 type BatchProcessor[T any] func(ctx context.Context, trigger Trigger, batch []T) error
 
+// Config is the configuration of a Nibbler
 type Config[T any] struct {
 	// ProcessingTimeout is context timeout for processing a single batch. If less than 1ms, defaults to 1s
 	ProcessingTimeout time.Duration
@@ -54,7 +68,9 @@ type Config[T any] struct {
 	// ResumeAfterErr if true will continue listening and keep processing if the processor returns
 	// an error, or if processor panics. In both cases, ProcessorErr would be executed
 	ResumeAfterErr bool
-	// ProcessorErr is the function which is executed if processor encounters an error or panic
+	// ProcessorErr is the function which is executed if processor encounters an error or panic.
+	// A panic is wrapped with ErrPanic. failedBatch is reused after it returns, and must not be retained.
+	// A panic within ProcessorErr is recovered and discarded.
 	ProcessorErr func(failedBatch []T, err error)
 
 	// FlushOnStop if true processes pending items when Listen stops because its context is done,
@@ -67,6 +83,7 @@ type Config[T any] struct {
 	FlushOnStop bool
 }
 
+// Sanitize sets defaults for unset or out of range values
 func (cfg *Config[T]) Sanitize() {
 	if cfg.ProcessingTimeout < time.Millisecond {
 		cfg.ProcessingTimeout = time.Second
@@ -85,6 +102,7 @@ func (cfg *Config[T]) Sanitize() {
 	}
 }
 
+// Validate returns ErrValidation if a required value is missing
 func (cfg *Config[T]) Validate() error {
 	if cfg.Processor == nil {
 		return fmt.Errorf("batch processor cannot be empty:%w", ErrValidation)
@@ -93,11 +111,13 @@ func (cfg *Config[T]) Validate() error {
 	return nil
 }
 
+// SanitizeValidate is Sanitize followed by Validate
 func (cfg *Config[T]) SanitizeValidate() error {
 	cfg.Sanitize()
 	return cfg.Validate()
 }
 
+// Nibbler is a micro-batch processor. Create it with New or Start.
 type Nibbler[T any] struct {
 	cfg       Config[T]
 	batch     []T
@@ -240,6 +260,7 @@ func (bat *Nibbler[T]) flushBatch(ctx context.Context) {
 func (bat *Nibbler[T]) listener(ctx context.Context, timer *time.Timer, size int) (err error) {
 	select {
 	case <-ctx.Done():
+		// the caller's ctx check ends the loop and returns the cause
 		return nil
 
 	case <-timer.C:

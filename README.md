@@ -4,7 +4,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/naughtygopher/nibbler.svg)](https://pkg.go.dev/github.com/naughtygopher/nibbler)
 [![Go Report Card](https://goreportcard.com/badge/github.com/naughtygopher/nibbler?cache_invalidate=1)](https://goreportcard.com/report/github.com/naughtygopher/nibbler)
 [![Coverage Status](https://coveralls.io/repos/github/naughtygopher/nibbler/badge.svg?branch=main&cache_invalidate=1)](https://coveralls.io/github/naughtygopher/nibbler?branch=main)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/creativecreature/sturdyc/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/naughtygopher/nibbler/blob/main/LICENSE)
 [![Mentioned in Awesome Go](https://awesome.re/mentioned-badge.svg)](https://github.com/avelino/awesome-go#stream-processing)
 
 # Nibbler
@@ -19,7 +19,7 @@ Micro-batch processing is a way to handle data by breaking a big task into small
 
 The same concept can also be extended to handle events processing. So, we have a queue subscriber, and instead of processing the events individually, we create micro batches and process them.
 
-The processing of a single micro batch can be triggered in two ways, based on a time ticker or if the micro batch size is full. i.e. process a non empty batch if duration X has passed or if the batch size is full
+The processing of a single micro batch can be triggered in two ways, based on time or if the micro batch size is full. i.e. process a non empty batch if duration X has passed since its first item arrived, or if the batch size is full
 
 <p align="center">
 <img src="https://github.com/user-attachments/assets/0a7df1c0-2d23-475e-9cc3-205f3f9bf4c4" alt="nibbler" width="384px"/>
@@ -44,12 +44,13 @@ The configurable flush interval (TickerDuration) represents your maximum accepta
 ### Config
 
 ```golang
-type BatchProcessor[T any] func(ctx context.Context, trigger trigger, batch []T) error
+type BatchProcessor[T any] func(ctx context.Context, trigger Trigger, batch []T) error
 
 type Config[T any] struct {
 	// ProcessingTimeout is context timeout for processing a single batch. If less than 1ms, defaults to 1s
 	ProcessingTimeout time.Duration
-	// TickerDuration is the duration after which a non-empty batch would be flushed. If less than 1ms, defaults to 1s
+	// TickerDuration is the maximum time an item waits before its batch is flushed. The timer
+	// starts when the first item of a batch arrives. If less than 1ms, defaults to 1s
 	TickerDuration time.Duration
 
 	// Size is the micro batch size. If 0, defaults to 100
@@ -65,14 +66,28 @@ type Config[T any] struct {
 	// ResumeAfterErr if true will continue listening and keep processing if the processor returns
 	// an error, or if processor panics. In both cases, ProcessorErr would be executed
 	ResumeAfterErr bool
-	// ProcessorErr is the function which is executed if processor encounters an error or panic
+	// ProcessorErr is the function which is executed if processor encounters an error or panic.
+	// A panic is wrapped with ErrPanic. failedBatch is reused after it returns, and must not be retained.
+	// A panic within ProcessorErr is recovered and discarded.
 	ProcessorErr func(failedBatch []T, err error)
+
+	// FlushOnStop if true processes pending items when Listen stops because its context is done,
+	// instead of dropping them.
+	FlushOnStop bool
 }
 ```
 
+A batch is processed with one of the triggers:
+
+| Trigger | When |
+|---|---|
+| `TriggerFull` | the batch has `Size` items |
+| `TriggerTicker` | `TickerDuration` has passed since the first item of the batch arrived |
+| `TriggerStop` | pending items flushed after the listener stopped, only with `FlushOnStop` |
+
 ## How to use nibbler?
 
-Below is an example showing how batching is used for a "banking" app which bulk processes account statements.
+Below is an example showing how batching is used for a "banking" app which bulk processes account statements. It is also available as a runnable example in [example_test.go](example_test.go).
 
 ```golang
 package main
@@ -80,101 +95,128 @@ package main
 import (
 	"context"
 	"fmt"
-	"sync"
+	"os"
+	"os/signal"
 	"time"
 
 	"github.com/naughtygopher/nibbler"
 )
-
-type db struct {
-	data         sync.Map
-	totalBalance int
-}
-
-func (d *db) BulkAddAccountsAndBalance(pp []AccStatement) error {
-	// assume we are doing a bulk insert/update into the database instead of inserting one by one.
-	// Bulk operations reduce the number of I/O required between your application and the database.
-	// Thereby making it better in most cases.
-	for _, p := range pp {
-		d.data.Store(p.AccountID, p.Balance)
-		d.totalBalance += p.Balance
-	}
-	return nil
-}
-
-type Bank struct {
-	db *db
-}
-
-func (bnk *Bank) ProcessAccountsBatch(
-	ctx context.Context,
-	trigger nibbler.Trigger,
-	batch []AccStatement,
-) error {
-	err := bnk.db.BulkAddAccountsAndBalance(batch)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (bnk *Bank) TotalBalance() int {
-	return bnk.db.totalBalance
-}
-
-func (bnk *Bank) TotalAccounts() int {
-	counter := 0
-	bnk.db.data.Range(func(key, value any) bool {
-		counter++
-		return true
-	})
-	return counter
-}
 
 type AccStatement struct {
 	AccountID string
 	Balance   int
 }
 
-func main() {
-	bnk := Bank{
-		db: &db{
-			data: sync.Map{},
-		},
-	}
+// Bank bulk inserts account statements. Its fields are only accessed by the listener goroutine,
+// and read after the listener is done.
+type Bank struct {
+	accounts     map[string]int
+	totalBalance int
+}
 
-	nib, err := nibbler.Start(context.Background(), &nibbler.Config[AccStatement]{
+func (bnk *Bank) ProcessAccountsBatch(_ context.Context, _ nibbler.Trigger, batch []AccStatement) error {
+	// assume this is a single bulk insert into the database, instead of one insert per statement
+	for _, st := range batch {
+		bnk.accounts[st.AccountID] = st.Balance
+		bnk.totalBalance += st.Balance
+	}
+	return nil
+}
+
+func main() {
+	bnk := &Bank{accounts: make(map[string]int)}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	nib, err := nibbler.Start(ctx, &nibbler.Config[AccStatement]{
 		Size:           10,
 		TickerDuration: time.Second,
 		Processor:      bnk.ProcessAccountsBatch,
+		// statements still pending when ctx is cancelled are processed instead of dropped
+		FlushOnStop: true,
 	})
 	if err != nil {
 		panic(err)
 	}
 
 	receiver := nib.Receiver()
-	for i := range 100 {
-		accID := fmt.Sprintf("account_id_%d", i)
+	for i := range 95 {
 		receiver <- AccStatement{
-			AccountID: accID,
+			AccountID: fmt.Sprintf("account_id_%d", i),
 			Balance:   50000 / (i + 1),
 		}
 	}
 
-	// wait for batches to be processed. Ideally this wouldn't be required as our application
-	// would not exit, instead just keep listening to the events stream.
-	time.Sleep(time.Second)
+	// stop producers first, then cancel and wait for the listener to finish
+	cancel()
+	<-nib.Done()
 
-	fmt.Printf(
-		"Number of accounts %d, total balance: %d\n",
-		bnk.TotalAccounts(),
-		bnk.TotalBalance(),
-	)
+	fmt.Printf("accounts: %d, total balance: %d\n", len(bnk.accounts), bnk.totalBalance)
+	fmt.Println("stopped:", nib.Err())
 }
 ```
 
 You can find all usage details in the tests.
+
+## Shutdown
+
+`Listen(ctx)` runs until `ctx` is done, and `Start(ctx, cfg)` runs `Listen` in a new goroutine. Cancelling `ctx` also cancels the context of the batch being processed.
+
+1. Stop the producers
+2. Cancel the context
+3. Wait on `<-nib.Done()`, and use `nib.Err()` for the reason the listener stopped
+
+Pending items are dropped by default. With `FlushOnStop`, the partial batch and the items buffered in the receiver at the time of stop are processed with `TriggerStop`. The flush is not cancelled by the listener's context, but every batch is still limited by `ProcessingTimeout`.
+
+The receiver channel is never closed. If a producer may outlive the listener, select on `Done()` when sending:
+
+```golang
+select {
+case nib.Receiver() <- item:
+case <-nib.Done():
+	// the listener has stopped
+}
+```
+
+To run the listener within an existing worker pool, use `New` and `Listen` directly:
+
+```golang
+workers.Go(func() { _ = nib.Listen(ctx) })
+```
+
+## Benchmarks
+
+End to end throughput, from pushing an item into the receiver until it is handed to a no-op processor. Intel i7-14700, Go 1.27.3.
+
+| Batch size | ns/item | allocs/item |
+|---|---|---|
+| 1 | 616.5 | 4 |
+| 10 | 113.3 | 0 |
+| 100 | 35.7 | 0 |
+| 1000 | 28.9 | 0 |
+| 100, parallel producers | 61.2 | 0 |
+
+The listener does not allocate per item. The allocations are per batch, for its context.
+
+```bash
+$ go test -run '^$' -bench . -benchmem ./...
+```
+
+## Migrating from v0.2
+
+- `Start(cfg)` becomes `Start(ctx, cfg)`, and `Listen()` becomes `Listen(ctx) error`
+- Use `Done()` and `Err()` to wait for the listener and get the reason it stopped
+- The receiver is never closed. Select on `Done()` when sending, if the listener may stop
+- `TickerDuration` defaults to 1s as documented, it was 1m
+- The flush timer starts when the first item of a batch arrives, instead of ticking at a fixed interval
+- Processor panics are wrapped with `ErrPanic`
+- New: `QueueSize`, `FlushOnStop` & `TriggerStop`
+- Go 1.25 or newer is required
+
+## Design decisions
+
+The reasoning behind nibbler's design is recorded as [architecture decision records](docs/adr/README.md).
 
 ## The gopher
 
