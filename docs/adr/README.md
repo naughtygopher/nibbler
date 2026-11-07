@@ -12,3 +12,4 @@ Why nibbler is built the way it is. See [0001](0001-record-architecture-decision
 | [0006](0006-panic-errors.md) | Panic errors | Accepted |
 | [0007](0007-flush-timer-armed-on-first-item.md) | Flush timer armed on first item | Accepted |
 | [0008](0008-flush-on-stop.md) | Flush on stop | Accepted |
+| [0009](0009-greedy-drain.md) | Greedy drain | Accepted |
