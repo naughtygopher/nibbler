@@ -37,6 +37,8 @@ type Config[T any] struct {
 
 	// Size is the micro batch size. If 0, defaults to 100
 	Size uint
+	// QueueSize is the buffer length of the receiver channel. If 0, defaults to Size
+	QueueSize uint
 
 	// Processor is a required configuration, it is called when a batch process is initiated either by
 	// ticker or when the batch is full. The 'batch' slice received must not be changed, if you have to
@@ -56,11 +58,15 @@ func (cfg *Config[T]) Sanitize() {
 	}
 
 	if cfg.TickerDuration < time.Millisecond {
-		cfg.TickerDuration = time.Minute
+		cfg.TickerDuration = time.Second
 	}
 
 	if cfg.Size == 0 {
 		cfg.Size = 100
+	}
+
+	if cfg.QueueSize == 0 {
+		cfg.QueueSize = cfg.Size
 	}
 }
 
@@ -78,7 +84,7 @@ func (cfg *Config[T]) SanitizeValidate() error {
 }
 
 type Nibbler[T any] struct {
-	cfg       *Config[T]
+	cfg       Config[T]
 	batch     []T
 	queue     chan T
 	done      chan struct{}
@@ -216,7 +222,8 @@ func (bat *Nibbler[T]) listener(ctx context.Context, ticker *time.Ticker, size i
 	return err
 }
 
-// New validates the config and returns a Nibbler which is not listening yet
+// New validates the config and returns a Nibbler which is not listening yet. The config is
+// sanitized in place, and a copy is retained, so changing cfg after New has no effect.
 func New[T any](cfg *Config[T]) (*Nibbler[T], error) {
 	err := cfg.SanitizeValidate()
 	if err != nil {
@@ -224,9 +231,9 @@ func New[T any](cfg *Config[T]) (*Nibbler[T], error) {
 	}
 
 	return &Nibbler[T]{
-		cfg:   cfg,
+		cfg:   *cfg,
 		batch: make([]T, 0, cfg.Size),
-		queue: make(chan T, cfg.Size),
+		queue: make(chan T, cfg.QueueSize),
 		done:  make(chan struct{}),
 	}, nil
 }

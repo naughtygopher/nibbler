@@ -54,6 +54,8 @@ type Config[T any] struct {
 
 	// Size is the micro batch size. If 0, defaults to 100
 	Size uint
+	// QueueSize is the buffer length of the receiver channel. If 0, defaults to Size
+	QueueSize uint
 
 	// Processor is a required configuration, it is called when a batch process is initiated either by
 	// ticker or when the batch is full. The 'batch' slice received must not be changed, if you have to

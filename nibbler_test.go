@@ -405,6 +405,46 @@ func TestDroppedOnStop(tt *testing.T) {
 	})
 }
 
+func TestQueueSize(tt *testing.T) {
+	processor := (&recorder[int]{}).processor(nil)
+
+	tt.Run("defaults to size", func(t *testing.T) {
+		nib, err := New(&Config[int]{Size: 7, Processor: processor})
+		require.NoError(t, err)
+		require.Equal(t, 7, cap(nib.Receiver()))
+	})
+
+	tt.Run("explicit", func(t *testing.T) {
+		nib, err := New(&Config[int]{Size: 7, QueueSize: 1024, Processor: processor})
+		require.NoError(t, err)
+		require.Equal(t, 1024, cap(nib.Receiver()))
+	})
+}
+
+func TestConfigCopied(tt *testing.T) {
+	synctest.Test(tt, func(t *testing.T) {
+		rec := &recorder[int]{}
+		cfg := &Config[int]{Size: 2, Processor: rec.processor(nil)}
+		nib, err := New(cfg)
+		require.NoError(t, err)
+
+		// changes after New must have no effect on the Nibbler
+		cfg.Size = 1
+		cfg.Processor = nil
+
+		ctx, cancel := context.WithCancel(t.Context())
+		go func() { _ = nib.Listen(ctx) }()
+
+		nib.Receiver() <- 1
+		nib.Receiver() <- 2
+		synctest.Wait()
+		require.Equal(t, [][]int{{1, 2}}, rec.Batches())
+
+		cancel()
+		<-nib.Done()
+	})
+}
+
 func TestSanitizeValidate(tt *testing.T) {
 	var (
 		processor = func(ctx context.Context, trigger Trigger, batch []string) error { return nil }
@@ -416,6 +456,7 @@ func TestSanitizeValidate(tt *testing.T) {
 			ProcessingTimeout: time.Minute,
 			TickerDuration:    time.Second,
 			Size:              10,
+			QueueSize:         1000,
 
 			Processor:      processor,
 			ResumeAfterErr: false,
@@ -426,6 +467,7 @@ func TestSanitizeValidate(tt *testing.T) {
 		asserter.EqualValues(time.Minute, cfg.ProcessingTimeout)
 		asserter.EqualValues(time.Second, cfg.TickerDuration)
 		asserter.EqualValues(10, cfg.Size)
+		asserter.EqualValues(1000, cfg.QueueSize)
 		asserter.False(cfg.ResumeAfterErr)
 	})
 
@@ -443,8 +485,9 @@ func TestSanitizeValidate(tt *testing.T) {
 		_, err := New(&cfg)
 		asserter.NoError(err)
 		asserter.EqualValues(time.Second, cfg.ProcessingTimeout)
-		asserter.EqualValues(time.Minute, cfg.TickerDuration)
+		asserter.EqualValues(time.Second, cfg.TickerDuration)
 		asserter.EqualValues(100, cfg.Size)
+		asserter.EqualValues(100, cfg.QueueSize)
 		asserter.Nil(cfg.ProcessorErr)
 		asserter.False(cfg.ResumeAfterErr)
 	})
